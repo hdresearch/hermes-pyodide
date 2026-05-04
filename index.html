@@ -11,7 +11,7 @@
         #status { padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 16px; white-space: pre-wrap; font-size: 0.85em; max-height: 200px; overflow-y: auto; }
         #chat { display: flex; flex-direction: column; height: calc(100vh - 300px); min-height: 300px; }
         #messages { flex: 1; overflow-y: auto; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px 6px 0 0; }
-        .msg { margin-bottom: 12px; line-height: 1.5; }
+        .msg { margin-bottom: 12px; line-height: 1.5; white-space: pre-wrap; }
         .msg.user { color: #58a6ff; }
         .msg.user::before { content: "› "; color: #8b949e; }
         .msg.assistant { color: #c9d1d9; }
@@ -19,22 +19,41 @@
         .msg.system { color: #8b949e; font-style: italic; font-size: 0.85em; }
         .msg.tool { color: #7ee787; font-size: 0.85em; }
         .msg.tool::before { content: "┊ "; }
+        .msg.error { color: #f85149; font-size: 0.85em; }
         #input-row { display: flex; }
         #input { flex: 1; padding: 10px 14px; font-family: inherit; font-size: 0.95em; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-top: none; border-radius: 0 0 0 6px; outline: none; }
         #input:focus { border-color: #58a6ff; }
         #send { padding: 10px 20px; font-family: inherit; font-size: 0.95em; background: #238636; color: #fff; border: 1px solid #238636; border-top: none; border-radius: 0 0 6px 0; cursor: pointer; }
         #send:hover { background: #2ea043; }
         #send:disabled { background: #30363d; border-color: #30363d; cursor: not-allowed; }
+        #api-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+        #api-row label { color: #8b949e; font-size: 0.85em; white-space: nowrap; }
+        #api-row input, #api-row select { padding: 6px 10px; font-family: inherit; font-size: 0.85em; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; outline: none; }
+        #api-row input:focus, #api-row select:focus { border-color: #58a6ff; }
+        #api-key { flex: 1; }
     </style>
 </head>
 <body>
     <h1>⚕ Hermes Agent</h1>
-    <p class="subtitle">Running in-browser via Pyodide • single-threaded mode</p>
+    <p class="subtitle">Running in-browser via Pyodide • single-threaded WebAssembly</p>
+
+    <div id="api-row">
+        <label for="api-key">API Key:</label>
+        <input id="api-key" type="password" placeholder="sk-or-... (OpenRouter key)" />
+        <label for="model-select">Model:</label>
+        <select id="model-select">
+            <option value="google/gemini-2.0-flash-001">gemini-2.0-flash</option>
+            <option value="anthropic/claude-sonnet-4-20250514">claude-sonnet-4</option>
+            <option value="openai/gpt-4o">gpt-4o</option>
+            <option value="meta-llama/llama-3.1-70b-instruct">llama-3.1-70b</option>
+        </select>
+    </div>
+
     <div id="status">Initializing Pyodide...</div>
     <div id="chat">
         <div id="messages"></div>
         <div id="input-row">
-            <input id="input" type="text" placeholder="Type a message..." disabled />
+            <input id="input" type="text" placeholder="Loading agent..." disabled />
             <button id="send" disabled>Send</button>
         </div>
     </div>
@@ -45,9 +64,10 @@
     const messagesEl = document.getElementById('messages');
     const inputEl = document.getElementById('input');
     const sendBtn = document.getElementById('send');
+    const apiKeyEl = document.getElementById('api-key');
+    const modelEl = document.getElementById('model-select');
 
     let pyodide = null;
-    let agentReady = false;
 
     function log(msg) {
         statusEl.textContent += '\n' + msg;
@@ -64,96 +84,134 @@
 
     async function init() {
         try {
+            // 1. Load Pyodide
             log('Loading Pyodide runtime...');
             pyodide = await loadPyodide({
-                stdout: (text) => { log('[py] ' + text); },
-                stderr: (text) => { log('[py:err] ' + text); },
+                stdout: (text) => { if (text.trim()) log('[py] ' + text); },
+                stderr: (text) => { if (text.trim()) log('[py:err] ' + text); },
             });
 
+            // 2. Install pip packages
             log('Installing packages...');
             await pyodide.loadPackage(['micropip', 'sqlite3', 'pyyaml']);
-
-            log('Installing pip packages...');
             await pyodide.runPythonAsync(`
 import micropip
-await micropip.install(['openai', 'httpx', 'pydantic', 'tenacity', 'python-dotenv', 'jinja2', 'pyodide-http'])
-print('Packages installed.')
+await micropip.install([
+    'openai', 'httpx', 'pydantic', 'tenacity',
+    'python-dotenv', 'jinja2', 'pyodide-http', 'fire'
+])
 `);
+            log('Packages installed.');
 
-            log('Loading hermes-agent code...');
-            // In a real deployment, you'd serve the patched hermes-agent files
-            // and load them here.  For this demo, we set up a minimal test.
+            // 3. Fetch and unpack the hermes-agent bundle
+            log('Downloading hermes-agent bundle...');
+            const resp = await fetch('/hermes-agent-bundle.tar.gz');
+            const buf = await resp.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+
+            // Write tarball to Pyodide FS
+            pyodide.FS.writeFile('/tmp/bundle.tar.gz', bytes);
+
+            log('Unpacking agent code...');
             await pyodide.runPythonAsync(`
-import os, sys
+import tarfile, os
+
+os.makedirs('/home/pyodide/hermes-agent', exist_ok=True)
+with tarfile.open('/tmp/bundle.tar.gz', 'r:gz') as tar:
+    tar.extractall('/home/pyodide/hermes-agent')
+
+import sys
+sys.path.insert(0, '/home/pyodide/hermes-agent')
+
+# Set environment
 os.environ['PYODIDE'] = '1'
+os.environ['HERMES_HOME'] = '/home/pyodide/.hermes'
+os.makedirs('/home/pyodide/.hermes/logs', exist_ok=True)
+os.makedirs('/home/pyodide/.hermes/sessions', exist_ok=True)
 
-# The pyodide_shims and patched hermes-agent code would be loaded from
-# your server here.  For now, we just verify the environment works.
-print(f'Python {sys.version}')
-print(f'Platform: {sys.platform}')
-
-import json, re, hashlib, uuid, sqlite3, pathlib
-print('Core stdlib: OK')
-
-import pydantic, yaml, jinja2, tenacity
-print('Key packages: OK')
-
-import httpx
-print(f'httpx {httpx.__version__}: OK')
-
-import openai
-print(f'openai {openai.__version__}: OK')
-
-# Test sqlite
-conn = sqlite3.connect(':memory:')
-conn.execute('CREATE TABLE test (id TEXT, val TEXT)')
-conn.execute('INSERT INTO test VALUES (?, ?)', ('1', 'hello'))
-row = conn.execute('SELECT * FROM test').fetchone()
-print(f'sqlite3: {row}')
-conn.close()
-
-print('\\n✅ Pyodide environment ready for hermes-agent')
+print(f'Agent code unpacked. Files: {len(os.listdir("/home/pyodide/hermes-agent"))}')
 `);
 
-            log('\n✅ Environment ready.');
-            log('Note: Full agent requires serving the patched hermes-agent files.');
-            log('See README.md for instructions.\n');
+            // 4. Import the agent
+            log('Loading hermes-agent...');
+            await pyodide.runPythonAsync(`
+# Import shims first (patches threading, httpx, etc.)
+import pyodide_shims
 
+# Now import the agent
+from run_agent import AIAgent
+print('AIAgent imported successfully')
+`);
+
+            log('\n✅ Agent ready!');
             inputEl.disabled = false;
             sendBtn.disabled = false;
-            inputEl.placeholder = 'Pyodide ready — serve patched hermes-agent to enable full agent';
+            inputEl.placeholder = 'Type a message...';
             inputEl.focus();
 
         } catch (e) {
             log('ERROR: ' + e.message);
             console.error(e);
+            addMessage('error', 'Failed to load agent: ' + e.message);
         }
     }
 
-    sendBtn.addEventListener('click', async () => {
+    async function sendMessage() {
         const text = inputEl.value.trim();
         if (!text) return;
 
+        const apiKey = apiKeyEl.value.trim();
+        if (!apiKey) {
+            addMessage('error', 'Please enter an API key (OpenRouter key starting with sk-or-...)');
+            apiKeyEl.focus();
+            return;
+        }
+
+        const model = modelEl.value;
         addMessage('user', text);
         inputEl.value = '';
         sendBtn.disabled = true;
         inputEl.disabled = true;
 
         try {
-            // This is where you'd call the agent:
-            // const result = await pyodide.runPythonAsync(`agent.run_conversation("${text}")`);
-            addMessage('system', '(Full agent not loaded — serve patched hermes-agent files to enable)');
+            // Escape the user text for Python
+            const escaped = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+            const escapedKey = apiKey.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+            const result = await pyodide.runPythonAsync(`
+import os
+os.environ['OPENROUTER_API_KEY'] = '${escapedKey}'
+
+try:
+    agent = AIAgent(
+        base_url='https://openrouter.ai/api/v1',
+        model='${model}',
+        api_key='${escapedKey}',
+        quiet_mode=True,
+        enabled_toolsets=['memory', 'planning'],
+    )
+    result = agent.run_conversation('${escaped}')
+    _response = result.get('final_response', str(result)) if isinstance(result, dict) else str(result)
+except Exception as e:
+    _response = f'Error: {type(e).__name__}: {e}'
+
+_response
+`);
+            addMessage('assistant', result);
+
         } catch (e) {
-            addMessage('system', 'Error: ' + e.message);
+            addMessage('error', 'Error: ' + e.message);
+            console.error(e);
         }
 
         sendBtn.disabled = false;
         inputEl.disabled = false;
         inputEl.focus();
-    });
+    }
 
+    sendBtn.addEventListener('click', sendMessage);
     inputEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !sendBtn.disabled) sendBtn.click();
+        if (e.key === 'Enter' && !sendBtn.disabled) sendMessage();
     });
 
     init();
