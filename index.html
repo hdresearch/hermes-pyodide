@@ -33,7 +33,7 @@
 </head>
 <body>
     <h1>⚕ Hermes Agent</h1>
-    <p class="subtitle">Running in-browser via Pyodide • API calls proxied through VM</p>
+    <p class="subtitle">Running in-browser via Pyodide • API calls proxied through VM server</p>
 
     <div id="api-row">
         <label for="api-key">API Key:</label>
@@ -80,16 +80,6 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    // Server-side proxy for API calls (avoids CORS issues)
-    async function callLLM(apiKey, baseUrl, payload) {
-        const resp = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_key: apiKey, base_url: baseUrl, payload }),
-        });
-        return await resp.json();
-    }
-
     async function init() {
         try {
             log('Loading Pyodide runtime...');
@@ -98,14 +88,28 @@
                 stderr: (text) => { if (text.trim()) log('[py:err] ' + text); },
             });
 
+            // Register the JS proxy function in Python's global scope
+            // This lets Python call our server-side proxy without any browser CORS issues
+            pyodide.registerJsModule("_js_proxy", {
+                call_llm: async function(requestJson) {
+                    const req = JSON.parse(requestJson);
+                    const resp = await fetch('/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(req),
+                    });
+                    const text = await resp.text();
+                    return text;
+                }
+            });
+
             log('Installing packages...');
             await pyodide.loadPackage(['micropip', 'sqlite3', 'pyyaml']);
             await pyodide.runPythonAsync(`
 import micropip
 await micropip.install([
     'openai', 'httpx', 'pydantic', 'tenacity',
-    'python-dotenv', 'jinja2', 'pyodide-http', 'fire',
-    'requests',
+    'python-dotenv', 'jinja2', 'fire',
 ])
 `);
             log('Packages installed.');
@@ -134,62 +138,90 @@ print(f'Agent code unpacked. Files: {len(os.listdir("/home/pyodide/hermes-agent"
 
             log('Loading hermes-agent...');
             await pyodide.runPythonAsync(`
+# Import and patch pyodide_shims FIRST
 import pyodide_shims
-from run_agent import AIAgent
-print('AIAgent imported successfully')
-`);
 
-            log('Setting up API proxy...');
-            await pyodide.runPythonAsync(`
+# NOW install the proxy transport that routes through /api/chat
+# This completely replaces the _FetchTransport with one that uses
+# our JS bridge (fetch to same-origin /api/chat) instead of
+# trying to reach OpenRouter directly from the browser.
+
+import httpx
 import json
 from pyodide.ffi import run_sync as _pyodide_run_sync
-from pyodide.http import pyfetch
+import _js_proxy
 
-# Patch: override OpenAI client to call our server-side proxy
-import httpx
+class _ServerProxyTransport(httpx.BaseTransport):
+    """Routes all HTTP through the VM's /api/chat endpoint via JS fetch.
 
-class _ProxyTransport(httpx.BaseTransport):
-    """Routes all OpenAI SDK HTTP calls through /api/chat on the host."""
+    The JS fetch() goes to the same-origin server (no CORS).
+    The server then makes the real HTTP call to OpenRouter/OpenAI/etc.
+    """
 
-    def __init__(self, api_key, base_url):
+    def __init__(self):
+        self._api_key = None
+        self._base_url = None
+
+    def configure(self, api_key, base_url):
         self._api_key = api_key
         self._base_url = base_url
 
-    def handle_request(self, request):
-        # Only intercept chat completions
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
         url_str = str(request.url)
+
+        # Only proxy chat completions — stub out everything else
         if '/chat/completions' not in url_str:
-            # For non-chat requests (models list, etc), return a stub
-            return httpx.Response(200, json={"data": []})
+            # Models list, etc. — return empty stub
+            return httpx.Response(200, json={"data": [], "object": "list"})
 
+        # Parse the request body
         body = json.loads(request.content) if request.content else {}
-        proxy_payload = json.dumps({
-            "api_key": self._api_key,
-            "base_url": self._base_url,
+
+        # Build proxy request
+        proxy_req = json.dumps({
+            "api_key": self._api_key or "",
+            "base_url": self._base_url or "https://openrouter.ai/api/v1",
             "payload": body,
-        }).encode()
+        })
 
-        resp = _pyodide_run_sync(pyfetch(
-            "/api/chat",
-            method="POST",
-            headers={"Content-Type": "application/json"},
-            body=proxy_payload,
-        ))
-        resp_bytes = _pyodide_run_sync(resp.bytes())
-
-        # Build response headers
-        resp_headers = {"content-type": "application/json"}
+        # Call JS fetch via the registered module — completely avoids
+        # XMLHttpRequest and its forbidden-header issues
+        resp_text = _pyodide_run_sync(_js_proxy.call_llm(proxy_req))
 
         return httpx.Response(
-            status_code=resp.status,
-            headers=resp_headers,
-            content=resp_bytes,
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=resp_text.encode("utf-8") if isinstance(resp_text, str) else resp_text,
         )
 
-# Store the transport class for use in sendMessage
-_ProxyTransportClass = _ProxyTransport
+# Create a global transport instance
+_proxy_transport = _ServerProxyTransport()
 
-print('API proxy transport ready')
+# Monkey-patch pyodide_shims so make_openai_client uses our proxy transport
+import pyodide_shims as _shims
+
+def _patched_get_fetch_transport():
+    return _proxy_transport
+
+_shims._get_fetch_transport = _patched_get_fetch_transport
+_shims._fetch_transport = _proxy_transport
+
+# Also monkey-patch the OpenAI client constructor to always use our transport
+import openai
+_OrigOpenAI = openai.OpenAI
+
+def _PatchedOpenAI(**kwargs):
+    kwargs.pop('http_client', None)  # Remove any existing http_client
+    custom_httpx = httpx.Client(transport=_proxy_transport)
+    kwargs['http_client'] = custom_httpx
+    return _OrigOpenAI(**kwargs)
+
+openai.OpenAI = _PatchedOpenAI
+
+# Now import the agent
+from run_agent import AIAgent
+print('AIAgent imported successfully')
+print('Server proxy transport installed')
 `);
 
             log('\\n✅ Agent ready! Enter your API key and send a message.');
@@ -227,28 +259,20 @@ print('API proxy transport ready')
             const escapedKey = apiKey.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
             const result = await pyodide.runPythonAsync(`
-import os, httpx
-from openai import OpenAI
+import os
 
 os.environ['OPENROUTER_API_KEY'] = '${escapedKey}'
 
-_base_url = 'https://openrouter.ai/api/v1'
-_transport = _ProxyTransportClass('${escapedKey}', _base_url)
-_http_client = httpx.Client(transport=_transport)
+# Configure the proxy transport with the user's key
+_proxy_transport.configure('${escapedKey}', 'https://openrouter.ai/api/v1')
 
 try:
     agent = AIAgent(
-        base_url=_base_url,
+        base_url='https://openrouter.ai/api/v1',
         model='${model}',
         api_key='${escapedKey}',
         quiet_mode=True,
         enabled_toolsets=['memory', 'planning'],
-    )
-    # Replace the client with our proxied version
-    agent.client = OpenAI(
-        api_key='${escapedKey}',
-        base_url=_base_url,
-        http_client=_http_client,
     )
     result = agent.run_conversation('${escaped}')
     _response = result.get('final_response', str(result)) if isinstance(result, dict) else str(result)
