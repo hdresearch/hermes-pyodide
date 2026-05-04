@@ -88,8 +88,8 @@
                 stderr: (text) => { if (text.trim()) log('[py:err] ' + text); },
             });
 
-            // Register the JS proxy function in Python's global scope
-            // This lets Python call our server-side proxy without any browser CORS issues
+            // Register JS proxy functions — ALL HTTP goes through same-origin /api/*
+            // This completely avoids CORS and browser-forbidden XHR headers
             pyodide.registerJsModule("_js_proxy", {
                 call_llm: async function(requestJson) {
                     const req = JSON.parse(requestJson);
@@ -98,8 +98,19 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(req),
                     });
-                    const text = await resp.text();
-                    return text;
+                    return await resp.text();
+                },
+                // Generic HTTP proxy — used by requests.get/post monkey-patch
+                do_fetch: async function(requestJson) {
+                    const resp = await fetch('/api/fetch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: requestJson,
+                    });
+                    const status = resp.status;
+                    const body = await resp.text();
+                    const ct = resp.headers.get('content-type') || '';
+                    return JSON.stringify({ status, body, content_type: ct });
                 }
             });
 
@@ -218,10 +229,59 @@ def _PatchedOpenAI(**kwargs):
 
 openai.OpenAI = _PatchedOpenAI
 
+# Monkey-patch requests library to route through JS bridge too
+# This is needed because model_metadata.py calls requests.get() to fetch
+# model info from OpenRouter, and browser_tool.py uses requests.post()
+import requests as _requests
+
+class _ProxyResponse:
+    """Minimal requests.Response work-alike returned by our proxy."""
+    def __init__(self, status_code, text, content_type=''):
+        self.status_code = status_code
+        self.text = text
+        self.content = text.encode('utf-8') if isinstance(text, str) else text
+        self.headers = {'content-type': content_type}
+        self.ok = 200 <= status_code < 300
+
+    def json(self):
+        return json.loads(self.text)
+
+    def raise_for_status(self):
+        if not self.ok:
+            raise Exception(f'HTTP {self.status_code}')
+
+_orig_requests_get = _requests.get
+_orig_requests_post = _requests.post
+
+def _proxied_get(url, **kwargs):
+    req = json.dumps({"url": url, "method": "GET", "headers": {}})
+    resp_json = _pyodide_run_sync(_js_proxy.do_fetch(req))
+    resp = json.loads(resp_json)
+    return _ProxyResponse(resp['status'], resp['body'], resp.get('content_type', ''))
+
+def _proxied_post(url, **kwargs):
+    headers = kwargs.get('headers', {})
+    data = kwargs.get('data')
+    json_body = kwargs.get('json')
+    body = None
+    if json_body is not None:
+        body = json.dumps(json_body)
+        headers.setdefault('Content-Type', 'application/json')
+    elif data is not None:
+        body = data if isinstance(data, str) else json.dumps(data)
+    req = json.dumps({"url": url, "method": "POST", "headers": headers, "body": body})
+    resp_json = _pyodide_run_sync(_js_proxy.do_fetch(req))
+    resp = json.loads(resp_json)
+    return _ProxyResponse(resp['status'], resp['body'], resp.get('content_type', ''))
+
+_requests.get = _proxied_get
+_requests.post = _proxied_post
+print('requests library patched to use server proxy')
+
 # Now import the agent
 from run_agent import AIAgent
 print('AIAgent imported successfully')
-print('Server proxy transport installed')
+print('All proxy transports installed')
 `);
 
             log('\\n✅ Agent ready! Enter your API key and send a message.');
