@@ -1,0 +1,63 @@
+{
+  "id": "hello_world_factory",
+  "name": "Hello World",
+  "description": "A simple factory that echoes your input",
+  "blocks": [
+    {
+      "id": "input_1",
+      "name": "Input",
+      "type": "input",
+      "inputs": [],
+      "outputs": [
+        {"id": "input_1_out_0", "name": "value", "data_type": "string"}
+      ],
+      "params": {},
+      "config": {"x": 50, "y": 100, "color": "#3498DB"}
+    },
+    {
+      "id": "terminal_1",
+      "name": "Echo Command",
+      "type": "tool",
+      "inputs": [
+        {"id": "terminal_1_in_0", "name": "input", "data_type": "string", "required": true}
+      ],
+      "outputs": [
+        {"id": "terminal_1_out_0", "name": "result", "data_type": "string"}
+      ],
+      "params": {
+        "tool_name": "terminal",
+        "tool_params": {
+          "command": "echo"
+        }
+      },
+      "config": {"x": 230, "y": 100, "color": "#4A90D9"}
+    },
+    {
+      "id": "output_1",
+      "name": "Output",
+      "type": "output",
+      "inputs": [
+        {"id": "output_1_in_0", "name": "result", "data_type": "string", "required": true}
+      ],
+      "outputs": [],
+      "params": {},
+      "config": {"x": 420, "y": 100, "color": "#27AE60"}
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_0",
+      "source": {"block": "input_1", "port": "value"},
+      "target": {"block": "terminal_1", "port": "input"}
+    },
+    {
+      "id": "conn_1",
+      "source": {"block": "terminal_1", "port": "result"},
+      "target": {"block": "output_1", "port": "result"}
+    }
+  ],
+  "config": {
+    "max_iterations": 10,
+    "timeout_seconds": 60
+  }
+}

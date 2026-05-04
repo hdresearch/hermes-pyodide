@@ -1,0 +1,9 @@
+[submodule "mini-swe-agent"]
+	path = mini-swe-agent
+	url = https://github.com/SWE-agent/mini-swe-agent
+[submodule "tinker-atropos"]
+	path = tinker-atropos
+	url = https://github.com/nousresearch/tinker-atropos
+[submodule "shapez"]
+	path = shapez
+	url = git@github.com:hdresearch/shapez.git

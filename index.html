@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Hermes Agent — Pyodide</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'SF Mono', Menlo, monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        h1 { color: #58a6ff; margin-bottom: 8px; font-size: 1.4em; }
+        .subtitle { color: #8b949e; margin-bottom: 20px; font-size: 0.9em; }
+        #status { padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 16px; white-space: pre-wrap; font-size: 0.85em; max-height: 200px; overflow-y: auto; }
+        #chat { display: flex; flex-direction: column; height: calc(100vh - 300px); min-height: 300px; }
+        #messages { flex: 1; overflow-y: auto; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px 6px 0 0; }
+        .msg { margin-bottom: 12px; line-height: 1.5; }
+        .msg.user { color: #58a6ff; }
+        .msg.user::before { content: "› "; color: #8b949e; }
+        .msg.assistant { color: #c9d1d9; }
+        .msg.assistant::before { content: "⚕ "; color: #f0883e; }
+        .msg.system { color: #8b949e; font-style: italic; font-size: 0.85em; }
+        .msg.tool { color: #7ee787; font-size: 0.85em; }
+        .msg.tool::before { content: "┊ "; }
+        #input-row { display: flex; }
+        #input { flex: 1; padding: 10px 14px; font-family: inherit; font-size: 0.95em; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-top: none; border-radius: 0 0 0 6px; outline: none; }
+        #input:focus { border-color: #58a6ff; }
+        #send { padding: 10px 20px; font-family: inherit; font-size: 0.95em; background: #238636; color: #fff; border: 1px solid #238636; border-top: none; border-radius: 0 0 6px 0; cursor: pointer; }
+        #send:hover { background: #2ea043; }
+        #send:disabled { background: #30363d; border-color: #30363d; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>⚕ Hermes Agent</h1>
+    <p class="subtitle">Running in-browser via Pyodide • single-threaded mode</p>
+    <div id="status">Initializing Pyodide...</div>
+    <div id="chat">
+        <div id="messages"></div>
+        <div id="input-row">
+            <input id="input" type="text" placeholder="Type a message..." disabled />
+            <button id="send" disabled>Send</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.6/full/pyodide.js"></script>
+    <script>
+    const statusEl = document.getElementById('status');
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+
+    let pyodide = null;
+    let agentReady = false;
+
+    function log(msg) {
+        statusEl.textContent += '\n' + msg;
+        statusEl.scrollTop = statusEl.scrollHeight;
+    }
+
+    function addMessage(role, content) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + role;
+        div.textContent = content;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function init() {
+        try {
+            log('Loading Pyodide runtime...');
+            pyodide = await loadPyodide({
+                stdout: (text) => { log('[py] ' + text); },
+                stderr: (text) => { log('[py:err] ' + text); },
+            });
+
+            log('Installing packages...');
+            await pyodide.loadPackage(['micropip', 'sqlite3', 'pyyaml']);
+
+            log('Installing pip packages...');
+            await pyodide.runPythonAsync(`
+import micropip
+await micropip.install(['openai', 'httpx', 'pydantic', 'tenacity', 'python-dotenv', 'jinja2', 'pyodide-http'])
+print('Packages installed.')
+`);
+
+            log('Loading hermes-agent code...');
+            // In a real deployment, you'd serve the patched hermes-agent files
+            // and load them here.  For this demo, we set up a minimal test.
+            await pyodide.runPythonAsync(`
+import os, sys
+os.environ['PYODIDE'] = '1'
+
+# The pyodide_shims and patched hermes-agent code would be loaded from
+# your server here.  For now, we just verify the environment works.
+print(f'Python {sys.version}')
+print(f'Platform: {sys.platform}')
+
+import json, re, hashlib, uuid, sqlite3, pathlib
+print('Core stdlib: OK')
+
+import pydantic, yaml, jinja2, tenacity
+print('Key packages: OK')
+
+import httpx
+print(f'httpx {httpx.__version__}: OK')
+
+import openai
+print(f'openai {openai.__version__}: OK')
+
+# Test sqlite
+conn = sqlite3.connect(':memory:')
+conn.execute('CREATE TABLE test (id TEXT, val TEXT)')
+conn.execute('INSERT INTO test VALUES (?, ?)', ('1', 'hello'))
+row = conn.execute('SELECT * FROM test').fetchone()
+print(f'sqlite3: {row}')
+conn.close()
+
+print('\\n✅ Pyodide environment ready for hermes-agent')
+`);
+
+            log('\n✅ Environment ready.');
+            log('Note: Full agent requires serving the patched hermes-agent files.');
+            log('See README.md for instructions.\n');
+
+            inputEl.disabled = false;
+            sendBtn.disabled = false;
+            inputEl.placeholder = 'Pyodide ready — serve patched hermes-agent to enable full agent';
+            inputEl.focus();
+
+        } catch (e) {
+            log('ERROR: ' + e.message);
+            console.error(e);
+        }
+    }
+
+    sendBtn.addEventListener('click', async () => {
+        const text = inputEl.value.trim();
+        if (!text) return;
+
+        addMessage('user', text);
+        inputEl.value = '';
+        sendBtn.disabled = true;
+        inputEl.disabled = true;
+
+        try {
+            // This is where you'd call the agent:
+            // const result = await pyodide.runPythonAsync(`agent.run_conversation("${text}")`);
+            addMessage('system', '(Full agent not loaded — serve patched hermes-agent files to enable)');
+        } catch (e) {
+            addMessage('system', 'Error: ' + e.message);
+        }
+
+        sendBtn.disabled = false;
+        inputEl.disabled = false;
+        inputEl.focus();
+    });
+
+    inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !sendBtn.disabled) sendBtn.click();
+    });
+
+    init();
+    </script>
+</body>
+</html>

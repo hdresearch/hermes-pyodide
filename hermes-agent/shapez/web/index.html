@@ -1,0 +1,1439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shapez - Visual Agent Factory</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #16213e;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #0f3460;
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            color: #e94560;
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+        
+        .btn-secondary {
+            background: #0f3460;
+            color: #eee;
+        }
+        
+        .btn-secondary:hover {
+            background: #1a4a7a;
+        }
+        
+        .factory-select {
+            background: #0f3460;
+            color: #eee;
+            padding: 8px 12px;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+        
+        .main {
+            display: flex;
+            height: calc(100vh - 60px);
+        }
+        
+        .sidebar {
+            width: 250px;
+            background: #16213e;
+            border-right: 1px solid #0f3460;
+            padding: 15px;
+            overflow-y: auto;
+        }
+        
+        .sidebar h3 {
+            color: #e94560;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .block-palette {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .palette-block {
+            padding: 10px 15px;
+            background: #0f3460;
+            border-radius: 8px;
+            cursor: grab;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .palette-block:hover {
+            background: #1a4a7a;
+            transform: translateX(5px);
+        }
+        
+        .palette-block .icon {
+            font-size: 1.2rem;
+        }
+        
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: 
+                linear-gradient(rgba(15, 52, 96, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15, 52, 96, 0.3) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        
+        #canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        
+        /* Blocks */
+        .block {
+            position: absolute;
+            min-width: 140px;
+            background: linear-gradient(135deg, #2a3a5a 0%, #1a2a4a 100%);
+            border: 2px solid #3a5a8a;
+            border-radius: 12px;
+            cursor: move;
+            user-select: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            transition: box-shadow 0.2s, border-color 0.2s;
+        }
+        
+        .block:hover {
+            box-shadow: 0 6px 30px rgba(233, 69, 96, 0.3);
+            border-color: #e94560;
+        }
+        
+        .block.running {
+            border-color: #4ecdc4;
+            box-shadow: 0 0 20px rgba(78, 205, 196, 0.5);
+            animation: pulse 1s ease-in-out infinite;
+        }
+        
+        .block.completed {
+            border-color: #27ae60;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 20px rgba(78, 205, 196, 0.5); }
+            50% { box-shadow: 0 0 40px rgba(78, 205, 196, 0.8); }
+        }
+        
+        .block-header {
+            padding: 10px 12px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px 10px 0 0;
+            font-weight: 600;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .block-body {
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            color: #aaa;
+        }
+        
+        .block-ports {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+        }
+        
+        .ports-left, .ports-right {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .port {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+            color: #888;
+        }
+        
+        .port-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #3a5a8a;
+            border: 2px solid #4a6a9a;
+            cursor: crosshair;
+            transition: all 0.2s;
+        }
+        
+        .port-dot:hover {
+            background: #e94560;
+            border-color: #ff6b6b;
+            transform: scale(1.3);
+        }
+        
+        .port-dot.connected {
+            background: #4ecdc4;
+            border-color: #6eded6;
+        }
+        
+        /* SVG Connections */
+        #connections {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .connection {
+            fill: none;
+            stroke: #4a6a9a;
+            stroke-width: 3;
+            stroke-linecap: round;
+        }
+        
+        .connection.active {
+            stroke: #4ecdc4;
+            filter: drop-shadow(0 0 6px rgba(78, 205, 196, 0.8));
+        }
+        
+        /* Conveyor belt pattern */
+        .conveyor-pattern {
+            stroke-dasharray: 8 4;
+            animation: conveyorMove 0.5s linear infinite;
+        }
+        
+        @keyframes conveyorMove {
+            from { stroke-dashoffset: 12; }
+            to { stroke-dashoffset: 0; }
+        }
+        
+        /* Animated items on belts */
+        .belt-item {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 10;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+        
+        .belt-item.data {
+            background: linear-gradient(135deg, #4ecdc4 0%, #2eada4 100%);
+        }
+        
+        .belt-item.query {
+            background: linear-gradient(135deg, #e94560 0%, #c93550 100%);
+        }
+        
+        .belt-item.result {
+            background: linear-gradient(135deg, #27ae60 0%, #1e8449 100%);
+        }
+        
+        /* Properties panel */
+        .properties {
+            width: 300px;
+            background: #16213e;
+            border-left: 1px solid #0f3460;
+            padding: 15px;
+            overflow-y: auto;
+        }
+        
+        .properties h3 {
+            color: #e94560;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .property-group {
+            margin-bottom: 15px;
+        }
+        
+        .property-group label {
+            display: block;
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .property-group input,
+        .property-group textarea,
+        .property-group select {
+            width: 100%;
+            padding: 8px 10px;
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            color: #eee;
+            font-size: 0.9rem;
+        }
+        
+        .property-group textarea {
+            min-height: 80px;
+            resize: vertical;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+        }
+        
+        /* Event log */
+        .event-log {
+            position: absolute;
+            bottom: 20px;
+            left: 270px;
+            right: 320px;
+            height: 350px;
+            background: rgba(22, 33, 62, 0.95);
+            border: 1px solid #0f3460;
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 100;
+        }
+        
+        .event-log-header {
+            padding: 8px 15px;
+            background: #0f3460;
+            font-size: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .event-log-content {
+            padding: 10px 15px;
+            height: calc(100% - 35px);
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.8rem;
+        }
+        
+        .event {
+            padding: 3px 0;
+            border-bottom: 1px solid #0f3460;
+            word-wrap: break-word;
+        }
+        
+        .event.tool-call {
+            color: #4ecdc4;
+        }
+        
+        .event.tool-result {
+            color: #27ae60;
+        }
+        
+        .event.error {
+            color: #e94560;
+        }
+        
+        .event.system {
+            color: #888;
+        }
+        
+        .event-time {
+            color: #666;
+            margin-right: 8px;
+        }
+        
+        /* Status badge */
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        
+        .status-idle {
+            background: #0f3460;
+            color: #888;
+        }
+        
+        .status-running {
+            background: #4ecdc4;
+            color: #1a1a2e;
+            animation: statusPulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes statusPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .status-error {
+            background: #e94560;
+            color: white;
+        }
+        
+        /* Modals */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 400px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .modal-header h2 {
+            color: #e94560;
+            font-size: 1.2rem;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        
+        .modal-body textarea {
+            width: 100%;
+            min-height: 200px;
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            color: #eee;
+            padding: 10px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.85rem;
+        }
+        
+        .modal-body input[type="text"] {
+            width: 100%;
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            color: #eee;
+            padding: 12px;
+            font-size: 1rem;
+            margin-bottom: 15px;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 15px;
+        }
+
+        /* WebSocket status indicator */
+        .ws-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+        
+        .ws-status.connected {
+            background: #27ae60;
+            box-shadow: 0 0 8px rgba(39, 174, 96, 0.6);
+        }
+        
+        .ws-status.disconnected {
+            background: #e94560;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏭 Shapez Factory</h1>
+        <div class="header-actions">
+            <div class="ws-status" id="ws-status" title="WebSocket disconnected"></div>
+            <select class="factory-select" id="factory-select" onchange="loadSelectedFactory()">
+                <option value="">-- Select Factory --</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadFactory()">📂 Load</button>
+            <button class="btn btn-secondary" onclick="saveFactory()">💾 Save</button>
+            <button class="btn btn-primary" onclick="runFactory()">▶ Run</button>
+            <span class="status-badge status-idle" id="status">Idle</span>
+        </div>
+    </div>
+    
+    <div class="main">
+        <div class="sidebar">
+            <h3>Blocks</h3>
+            <div class="block-palette">
+                <div class="palette-block" draggable="true" data-type="input">
+                    <span class="icon">📥</span>
+                    <span>Input</span>
+                </div>
+                <div class="palette-block" draggable="true" data-type="output">
+                    <span class="icon">📤</span>
+                    <span>Output</span>
+                </div>
+                <div class="palette-block" draggable="true" data-type="tool">
+                    <span class="icon">🔧</span>
+                    <span>Tool</span>
+                </div>
+                <div class="palette-block" draggable="true" data-type="agent">
+                    <span class="icon">🤖</span>
+                    <span>Agent</span>
+                </div>
+                <div class="palette-block" draggable="true" data-type="prompt">
+                    <span class="icon">📝</span>
+                    <span>Prompt</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="canvas-container">
+            <svg id="connections"></svg>
+            <div id="canvas"></div>
+            <div id="belt-items"></div>
+        </div>
+        
+        <div class="properties" id="properties">
+            <h3>Properties</h3>
+            <p style="color: #666; font-size: 0.85rem;">Select a block to edit its properties</p>
+        </div>
+    </div>
+    
+    <div class="event-log">
+        <div class="event-log-header">
+            <span>📋 Activity Log</span>
+            <button onclick="clearLog()" style="background:none;border:none;color:#888;cursor:pointer;">Clear</button>
+        </div>
+        <div class="event-log-content" id="event-log"></div>
+    </div>
+    
+    <!-- Load Modal -->
+    <div class="modal" id="load-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Load Factory</h2>
+                <button class="modal-close" onclick="closeModal('load-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="load-json" placeholder="Paste factory JSON here..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('load-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="doLoadFactory()">Load</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Save Modal -->
+    <div class="modal" id="save-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Save Factory</h2>
+                <button class="modal-close" onclick="closeModal('save-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="save-json" readonly></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('save-modal')">Close</button>
+                <button class="btn btn-primary" onclick="copyToClipboard()">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Run Modal -->
+    <div class="modal" id="run-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Run Factory</h2>
+                <button class="modal-close" onclick="closeModal('run-modal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label style="display:block;margin-bottom:8px;color:#888;">Enter input for the factory:</label>
+                <input type="text" id="run-input" placeholder="Type your input here..." onkeydown="if(event.key==='Enter')executeWithInput()">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal('run-modal')">Cancel</button>
+                <button class="btn btn-primary" onclick="executeWithInput()">▶ Run</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let blocks = [];
+        let connections = [];
+        let selectedBlock = null;
+        let blockIdCounter = 0;
+        let draggingBlock = null;
+        let dragOffset = { x: 0, y: 0 };
+        let connectingFrom = null;
+        let beltItems = [];
+        let animationFrame = null;
+        
+        const canvas = document.getElementById('canvas');
+        const connectionsLayer = document.getElementById('connections');
+        const beltItemsLayer = document.getElementById('belt-items');
+        
+        // Block type configurations
+        const blockTypes = {
+            input: { name: 'Input', color: '#3498DB', inputs: [], outputs: ['value'] },
+            output: { name: 'Output', color: '#27AE60', inputs: ['result'], outputs: [] },
+            tool: { name: 'Tool', color: '#4A90D9', inputs: ['input'], outputs: ['result'] },
+            agent: { name: 'Agent', color: '#9B59B6', inputs: ['prompt'], outputs: ['response'] },
+            prompt: { name: 'Prompt', color: '#E67E22', inputs: ['variables'], outputs: ['text'] }
+        };
+        
+        // WebSocket connection
+        let ws = null;
+        let wsReconnectTimer = null;
+        
+        function connectWebSocket() {
+            const wsUrl = `ws://${window.location.hostname}:8765`;
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                document.getElementById('ws-status').classList.add('connected');
+                document.getElementById('ws-status').classList.remove('disconnected');
+                document.getElementById('ws-status').title = 'WebSocket connected';
+                logEvent('system', '🔌 WebSocket connected');
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('ws-status').classList.remove('connected');
+                document.getElementById('ws-status').classList.add('disconnected');
+                document.getElementById('ws-status').title = 'WebSocket disconnected';
+                wsReconnectTimer = setTimeout(connectWebSocket, 5000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                wsReconnectTimer = setTimeout(connectWebSocket, 5000);
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWebSocketMessage(msg);
+                } catch (e) {
+                    console.error('Failed to parse WebSocket message:', e);
+                }
+            };
+        }
+        
+        function handleWebSocketMessage(msg) {
+            if (msg.type === 'agent_event') {
+                handleAgentEvent(msg.payload);
+            } else if (msg.type === 'factory_update') {
+                handleFactoryUpdate(msg.payload);
+            } else if (msg.type === 'session_list') {
+                console.log('Available sessions:', msg.payload.sessions);
+            }
+        }
+        
+        function handleAgentEvent(payload) {
+            const eventType = payload.event_type;
+            const toolName = payload.tool_name || '';
+            const args = payload.args || {};
+            const result = payload.result || '';
+            
+            if (eventType === 'tool_call') {
+                logEvent('tool-call', `🔧 ${toolName}: ${JSON.stringify(args).slice(0, 200)}`);
+                highlightActiveBlock(toolName);
+                // Spawn belt item
+                spawnBeltItem(toolName, 'query');
+            } else if (eventType === 'tool_result') {
+                logEvent('tool-result', `✓ ${toolName}: ${result?.slice(0, 500) || 'done'}`);
+            } else if (eventType === 'user_message') {
+                logEvent('user', payload.content?.slice(0, 200) || '');
+            } else if (eventType === 'assistant_message') {
+                logEvent('assistant', payload.content?.slice(0, 200) || '');
+            }
+        }
+        
+        function handleFactoryUpdate(payload) {
+            const status = document.getElementById('status');
+            
+            switch (payload.status) {
+                case 'started':
+                    status.textContent = 'Running';
+                    status.className = 'status-badge status-running';
+                    logEvent('system', `🏭 Factory started: ${payload.factory_name}`);
+                    startConveyorAnimation();
+                    break;
+                case 'block_started':
+                    highlightBlock(payload.block_id, 'running');
+                    logEvent('tool-call', `▶ ${payload.block_name} (${payload.block_type})`);
+                    // Spawn item entering the block
+                    spawnBeltItemToBlock(payload.block_id, 'data');
+                    break;
+                case 'block_completed':
+                    highlightBlock(payload.block_id, 'completed');
+                    logEvent('tool-result', `✓ ${payload.block_name}: ${payload.result?.slice(0, 500) || 'done'}`);
+                    // Spawn item leaving the block
+                    spawnBeltItemFromBlock(payload.block_id, 'result');
+                    break;
+                case 'completed':
+                    status.textContent = 'Completed';
+                    status.className = 'status-badge status-idle';
+                    logEvent('system', `🏭 Factory completed`);
+                    setTimeout(stopConveyorAnimation, 2000);
+                    break;
+                case 'error':
+                    status.textContent = 'Error';
+                    status.className = 'status-badge status-error';
+                    logEvent('error', `❌ Error: ${payload.error}`);
+                    stopConveyorAnimation();
+                    break;
+            }
+        }
+        
+        // Belt item animation system
+        function spawnBeltItem(blockName, type) {
+            const block = blocks.find(b => b.name.toLowerCase().includes(blockName.toLowerCase()));
+            if (block) {
+                spawnBeltItemToBlock(block.id, type);
+            }
+        }
+        
+        function spawnBeltItemToBlock(blockId, type) {
+            const block = blocks.find(b => b.id === blockId);
+            if (!block) return;
+            
+            // Find incoming connection
+            const incomingConn = connections.find(c => c.to.block === blockId);
+            if (incomingConn) {
+                const sourceBlock = blocks.find(b => b.id === incomingConn.from.block);
+                if (sourceBlock) {
+                    createMovingItem(sourceBlock, block, type);
+                }
+            } else {
+                // No incoming connection, spawn at block
+                createItemAtBlock(block, type, 'in');
+            }
+        }
+        
+        function spawnBeltItemFromBlock(blockId, type) {
+            const block = blocks.find(b => b.id === blockId);
+            if (!block) return;
+            
+            // Find outgoing connection
+            const outgoingConn = connections.find(c => c.from.block === blockId);
+            if (outgoingConn) {
+                const targetBlock = blocks.find(b => b.id === outgoingConn.to.block);
+                if (targetBlock) {
+                    createMovingItem(block, targetBlock, type);
+                }
+            } else {
+                // No outgoing connection, spawn at block
+                createItemAtBlock(block, type, 'out');
+            }
+        }
+        
+        function createItemAtBlock(block, type, direction) {
+            const item = document.createElement('div');
+            item.className = `belt-item ${type}`;
+            item.innerHTML = getItemEmoji(type);
+            
+            const x = block.x + (direction === 'in' ? -10 : 130);
+            const y = block.y + 30;
+            
+            item.style.left = x + 'px';
+            item.style.top = y + 'px';
+            item.style.opacity = '0';
+            item.style.transform = 'scale(0.5)';
+            
+            beltItemsLayer.appendChild(item);
+            
+            // Animate in
+            requestAnimationFrame(() => {
+                item.style.transition = 'all 0.3s ease-out';
+                item.style.opacity = '1';
+                item.style.transform = 'scale(1)';
+            });
+            
+            // Remove after delay
+            setTimeout(() => {
+                item.style.opacity = '0';
+                item.style.transform = 'scale(0.5)';
+                setTimeout(() => item.remove(), 300);
+            }, 1500);
+        }
+        
+        function createMovingItem(fromBlock, toBlock, type) {
+            const item = document.createElement('div');
+            item.className = `belt-item ${type}`;
+            item.innerHTML = getItemEmoji(type);
+            
+            const startX = fromBlock.x + 130;
+            const startY = fromBlock.y + 30;
+            const endX = toBlock.x - 10;
+            const endY = toBlock.y + 30;
+            
+            item.style.left = startX + 'px';
+            item.style.top = startY + 'px';
+            
+            beltItemsLayer.appendChild(item);
+            
+            // Animate along path
+            const duration = 800;
+            const startTime = Date.now();
+            
+            function animate() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const eased = easeInOutCubic(progress);
+                
+                const x = startX + (endX - startX) * eased;
+                const y = startY + (endY - startY) * eased;
+                
+                item.style.left = x + 'px';
+                item.style.top = y + 'px';
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    // Fade out at destination
+                    item.style.transition = 'opacity 0.3s';
+                    item.style.opacity = '0';
+                    setTimeout(() => item.remove(), 300);
+                }
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        function easeInOutCubic(t) {
+            return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+        
+        function getItemEmoji(type) {
+            switch (type) {
+                case 'query': return '❓';
+                case 'data': return '📦';
+                case 'result': return '✨';
+                default: return '●';
+            }
+        }
+        
+        function startConveyorAnimation() {
+            document.querySelectorAll('.connection').forEach(conn => {
+                conn.classList.add('conveyor-pattern');
+            });
+        }
+        
+        function stopConveyorAnimation() {
+            document.querySelectorAll('.connection').forEach(conn => {
+                conn.classList.remove('conveyor-pattern');
+            });
+            // Clear all belt items
+            beltItemsLayer.innerHTML = '';
+        }
+        
+        function highlightBlock(blockId, state) {
+            const el = document.querySelector(`[data-block-id="${blockId}"]`);
+            if (el) {
+                el.classList.remove('running', 'completed');
+                if (state) el.classList.add(state);
+            }
+        }
+        
+        function highlightActiveBlock(toolName) {
+            blocks.forEach(b => {
+                if (b.params?.tool_name?.toLowerCase().includes(toolName.toLowerCase())) {
+                    highlightBlock(b.id, 'running');
+                }
+            });
+        }
+        
+        function resetBlockHighlights() {
+            document.querySelectorAll('.block').forEach(el => {
+                el.classList.remove('running', 'completed');
+            });
+        }
+        
+        // Logging
+        function logEvent(type, message) {
+            const log = document.getElementById('event-log');
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement('div');
+            div.className = `event ${type}`;
+            div.innerHTML = `<span class="event-time">[${time}]</span> ${message}`;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('event-log').innerHTML = '';
+        }
+        
+        // Factory list
+        async function loadFactoryList() {
+            try {
+                const response = await fetch('/api/factories');
+                const data = await response.json();
+                const select = document.getElementById('factory-select');
+                
+                data.factories.forEach(f => {
+                    const option = document.createElement('option');
+                    option.value = f.id;
+                    option.textContent = f.name;
+                    select.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to load factory list:', e);
+            }
+        }
+        
+        async function loadSelectedFactory() {
+            const select = document.getElementById('factory-select');
+            const factoryId = select.value;
+            if (!factoryId) return;
+            
+            try {
+                const response = await fetch(`/factories/${factoryId}.json`);
+                const factory = await response.json();
+                loadFactoryData(factory);
+                logEvent('system', `Loaded factory: ${factory.name}`);
+            } catch (e) {
+                console.error('Failed to load factory:', e);
+                logEvent('error', `Failed to load factory: ${e.message}`);
+            }
+        }
+        
+        function loadFactoryData(factory) {
+            // Clear existing
+            blocks = [];
+            connections = [];
+            canvas.querySelectorAll('.block').forEach(el => el.remove());
+            
+            // Load blocks
+            factory.blocks.forEach(b => {
+                const block = {
+                    id: b.id,
+                    type: b.type,
+                    name: b.name,
+                    x: b.config?.x || 100,
+                    y: b.config?.y || 100,
+                    params: b.params || {},
+                    inputs: b.inputs || [],
+                    outputs: b.outputs || []
+                };
+                blocks.push(block);
+                renderBlock(block);
+            });
+            
+            // Load connections
+            factory.connections.forEach(c => {
+                connections.push({
+                    from: { block: c.source.block, port: c.source.port },
+                    to: { block: c.target.block, port: c.target.port }
+                });
+            });
+            
+            renderConnections();
+        }
+        
+        // Initialize
+        window.onload = function() {
+            loadFactoryList();
+            logEvent('system', 'Shapez Factory UI initialized');
+            setTimeout(connectWebSocket, 500);
+        };
+        
+        // Drag and drop from palette
+        document.querySelectorAll('.palette-block').forEach(el => {
+            el.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('blockType', e.target.dataset.type);
+            });
+        });
+        
+        canvas.addEventListener('dragover', (e) => e.preventDefault());
+        canvas.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const type = e.dataTransfer.getData('blockType');
+            if (type) {
+                const rect = canvas.getBoundingClientRect();
+                createBlock(type, e.clientX - rect.left - 70, e.clientY - rect.top - 30);
+            }
+        });
+        
+        function createBlock(type, x, y) {
+            const id = `block_${blockIdCounter++}`;
+            const config = blockTypes[type];
+            const block = {
+                id,
+                type,
+                name: config.name,
+                x,
+                y,
+                params: type === 'tool' ? { tool_name: '', tool_params: {} } : {},
+                inputs: config.inputs.map((inp, i) => ({
+                    id: `${id}_in_${i}`,
+                    name: inp,
+                    data_type: 'any',
+                    required: true
+                })),
+                outputs: config.outputs.map((out, i) => ({
+                    id: `${id}_out_${i}`,
+                    name: out,
+                    data_type: 'any'
+                }))
+            };
+            blocks.push(block);
+            renderBlock(block);
+            return block;
+        }
+        
+        function renderBlock(block) {
+            const config = blockTypes[block.type];
+            const el = document.createElement('div');
+            el.className = 'block';
+            el.dataset.blockId = block.id;
+            el.style.left = block.x + 'px';
+            el.style.top = block.y + 'px';
+            el.style.borderColor = config.color;
+            
+            const inputs = block.inputs || config.inputs.map(name => ({ name }));
+            const outputs = block.outputs || config.outputs.map(name => ({ name }));
+            
+            el.innerHTML = `
+                <div class="block-header" style="background: ${config.color}22;">
+                    <span>${block.name}</span>
+                </div>
+                <div class="block-body">
+                    <div class="block-ports">
+                        <div class="ports-left">
+                            ${inputs.map(inp => `
+                                <div class="port">
+                                    <div class="port-dot" data-port="${inp.name}" data-direction="in"></div>
+                                    <span>${inp.name}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                        <div class="ports-right">
+                            ${outputs.map(out => `
+                                <div class="port">
+                                    <span>${out.name}</span>
+                                    <div class="port-dot" data-port="${out.name}" data-direction="out"></div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Drag handling
+            el.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('port-dot')) return;
+                draggingBlock = block;
+                dragOffset = { x: e.clientX - block.x, y: e.clientY - block.y };
+                el.style.zIndex = 100;
+            });
+            
+            // Port connection handling
+            el.querySelectorAll('.port-dot').forEach(port => {
+                port.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    const direction = port.dataset.direction;
+                    const portName = port.dataset.port;
+                    
+                    if (direction === 'out') {
+                        connectingFrom = { block: block.id, port: portName, element: port };
+                        port.style.background = '#e94560';
+                    }
+                });
+                
+                port.addEventListener('mouseup', (e) => {
+                    if (connectingFrom && port.dataset.direction === 'in') {
+                        const portName = port.dataset.port;
+                        if (connectingFrom.block !== block.id) {
+                            connections.push({
+                                from: { block: connectingFrom.block, port: connectingFrom.port },
+                                to: { block: block.id, port: portName }
+                            });
+                            renderConnections();
+                            connectingFrom.element.classList.add('connected');
+                            port.classList.add('connected');
+                        }
+                    }
+                });
+            });
+            
+            // Click to select
+            el.addEventListener('click', (e) => {
+                if (!draggingBlock) {
+                    selectBlock(block);
+                }
+            });
+            
+            canvas.appendChild(el);
+        }
+        
+        document.addEventListener('mousemove', (e) => {
+            if (draggingBlock) {
+                const rect = canvas.getBoundingClientRect();
+                draggingBlock.x = e.clientX - rect.left - dragOffset.x;
+                draggingBlock.y = e.clientY - rect.top - dragOffset.y;
+                const el = document.querySelector(`[data-block-id="${draggingBlock.id}"]`);
+                if (el) {
+                    el.style.left = draggingBlock.x + 'px';
+                    el.style.top = draggingBlock.y + 'px';
+                }
+                renderConnections();
+            }
+        });
+        
+        document.addEventListener('mouseup', () => {
+            if (draggingBlock) {
+                const el = document.querySelector(`[data-block-id="${draggingBlock.id}"]`);
+                if (el) el.style.zIndex = '';
+                draggingBlock = null;
+            }
+            if (connectingFrom) {
+                connectingFrom.element.style.background = '';
+                connectingFrom = null;
+            }
+        });
+        
+        function renderConnections() {
+            const svg = connectionsLayer;
+            svg.innerHTML = '';
+            
+            connections.forEach(conn => {
+                const fromBlock = blocks.find(b => b.id === conn.from.block);
+                const toBlock = blocks.find(b => b.id === conn.to.block);
+                
+                if (!fromBlock || !toBlock) return;
+                
+                const fromX = fromBlock.x + 140;
+                const fromY = fromBlock.y + 45;
+                const toX = toBlock.x;
+                const toY = toBlock.y + 45;
+                
+                const midX = (fromX + toX) / 2;
+                
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', `M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}`);
+                path.classList.add('connection');
+                svg.appendChild(path);
+            });
+        }
+        
+        function selectBlock(block) {
+            selectedBlock = block;
+            document.querySelectorAll('.block').forEach(el => el.style.boxShadow = '');
+            const el = document.querySelector(`[data-block-id="${block.id}"]`);
+            if (el) {
+                el.style.boxShadow = '0 0 0 3px #e94560';
+            }
+            showBlockProperties(block);
+        }
+        
+        function showBlockProperties(block) {
+            const props = document.getElementById('properties');
+            
+            if (block.type === 'tool') {
+                props.innerHTML = `
+                    <h3>Tool Block</h3>
+                    <div class="property-group">
+                        <label>Name</label>
+                        <input type="text" value="${block.name}" onchange="updateBlockName('${block.id}', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <label>Tool Name</label>
+                        <input type="text" value="${block.params.tool_name || ''}" 
+                            onchange="updateBlockParam('${block.id}', 'tool_name', this.value)"
+                            placeholder="e.g. gemini_search, terminal">
+                    </div>
+                    <div class="property-group">
+                        <label>Tool Parameters (JSON)</label>
+                        <textarea onchange="updateBlockParam('${block.id}', 'tool_params', JSON.parse(this.value))">${JSON.stringify(block.params.tool_params || {}, null, 2)}</textarea>
+                    </div>
+                    <div class="property-group">
+                        <button class="btn btn-secondary" onclick="deleteBlock('${block.id}')">🗑️ Delete Block</button>
+                    </div>
+                `;
+            } else if (block.type === 'agent') {
+                props.innerHTML = `
+                    <h3>Agent Block</h3>
+                    <div class="property-group">
+                        <label>Name</label>
+                        <input type="text" value="${block.name}" onchange="updateBlockName('${block.id}', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <label>System Prompt</label>
+                        <textarea onchange="updateBlockParam('${block.id}', 'system_prompt', this.value)">${block.params.system_prompt || ''}</textarea>
+                    </div>
+                    <div class="property-group">
+                        <label>Model (optional)</label>
+                        <input type="text" value="${block.params.model || ''}" 
+                            onchange="updateBlockParam('${block.id}', 'model', this.value)"
+                            placeholder="e.g. anthropic/claude-sonnet-4">
+                    </div>
+                    <div class="property-group">
+                        <button class="btn btn-secondary" onclick="deleteBlock('${block.id}')">🗑️ Delete Block</button>
+                    </div>
+                `;
+            } else {
+                props.innerHTML = `
+                    <h3>${blockTypes[block.type].name} Block</h3>
+                    <div class="property-group">
+                        <label>Name</label>
+                        <input type="text" value="${block.name}" onchange="updateBlockName('${block.id}', this.value)">
+                    </div>
+                    <div class="property-group">
+                        <button class="btn btn-secondary" onclick="deleteBlock('${block.id}')">🗑️ Delete Block</button>
+                    </div>
+                `;
+            }
+        }
+        
+        function updateBlockName(blockId, name) {
+            const block = blocks.find(b => b.id === blockId);
+            if (block) {
+                block.name = name;
+                const el = document.querySelector(`[data-block-id="${blockId}"] .block-header span`);
+                if (el) el.textContent = name;
+            }
+        }
+        
+        function updateBlockParam(blockId, key, value) {
+            const block = blocks.find(b => b.id === blockId);
+            if (block) {
+                block.params[key] = value;
+            }
+        }
+        
+        function deleteBlock(blockId) {
+            blocks = blocks.filter(b => b.id !== blockId);
+            connections = connections.filter(c => c.from.block !== blockId && c.to.block !== blockId);
+            document.querySelector(`[data-block-id="${blockId}"]`)?.remove();
+            renderConnections();
+            document.getElementById('properties').innerHTML = '<h3>Properties</h3><p style="color:#666;">Select a block to edit</p>';
+        }
+        
+        function getFactoryJSON() {
+            return {
+                id: `factory_${Date.now()}`,
+                name: 'My Factory',
+                description: '',
+                blocks: blocks.map(b => ({
+                    id: b.id,
+                    name: b.name,
+                    type: b.type,
+                    inputs: b.inputs && b.inputs.length > 0 
+                        ? b.inputs 
+                        : blockTypes[b.type].inputs.map((inp, i) => ({
+                            id: `${b.id}_in_${i}`,
+                            name: inp,
+                            data_type: 'any',
+                            required: true
+                        })),
+                    outputs: b.outputs && b.outputs.length > 0
+                        ? b.outputs
+                        : blockTypes[b.type].outputs.map((out, i) => ({
+                            id: `${b.id}_out_${i}`,
+                            name: out,
+                            data_type: 'any'
+                        })),
+                    params: b.params,
+                    config: { x: b.x, y: b.y, width: 140, height: 60 }
+                })),
+                connections: connections.map((c, i) => ({
+                    id: `conn_${i}`,
+                    source: { block: c.from.block, port: c.from.port },
+                    target: { block: c.to.block, port: c.to.port }
+                })),
+                config: {
+                    max_iterations: 100,
+                    timeout_seconds: 300,
+                    parallel_execution: false,
+                    stop_on_error: true
+                }
+            };
+        }
+        
+        function loadFactory() {
+            document.getElementById('load-modal').classList.add('active');
+        }
+        
+        function saveFactory() {
+            const json = JSON.stringify(getFactoryJSON(), null, 2);
+            document.getElementById('save-json').value = json;
+            document.getElementById('save-modal').classList.add('active');
+        }
+        
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+        
+        function doLoadFactory() {
+            try {
+                const json = document.getElementById('load-json').value;
+                const factory = JSON.parse(json);
+                loadFactoryData(factory);
+                closeModal('load-modal');
+                logEvent('system', `Loaded factory: ${factory.name}`);
+            } catch (e) {
+                alert('Invalid JSON: ' + e.message);
+            }
+        }
+        
+        function copyToClipboard() {
+            const json = document.getElementById('save-json');
+            json.select();
+            document.execCommand('copy');
+            logEvent('system', 'Factory JSON copied to clipboard');
+        }
+        
+        function runFactory() {
+            // Check if there are input blocks that need values
+            const inputBlocks = blocks.filter(b => b.type === 'input');
+            if (inputBlocks.length > 0) {
+                document.getElementById('run-modal').classList.add('active');
+                document.getElementById('run-input').focus();
+            } else {
+                executeWithInput();
+            }
+        }
+        
+        async function executeWithInput() {
+            const factory = getFactoryJSON();
+            const status = document.getElementById('status');
+            const inputText = document.getElementById('run-input')?.value || '';
+            
+            closeModal('run-modal');
+            
+            // Build inputs object
+            const inputs = {};
+            blocks.filter(b => b.type === 'input').forEach(b => {
+                inputs[b.name] = inputText;
+            });
+            
+            status.textContent = 'Running...';
+            status.className = 'status-badge status-running';
+            logEvent('system', 'Starting factory execution...');
+            logEvent('user', 'Input: ' + inputText.slice(0, 100));
+            resetBlockHighlights();
+            startConveyorAnimation();
+            
+            // Use WebSocket for real-time updates
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'execute_factory',
+                    payload: {
+                        factory_json: JSON.stringify(factory),
+                        inputs: inputs
+                    }
+                }));
+                return;
+            }
+            
+            // Fallback to HTTP
+            try {
+                const response = await fetch('/api/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        factory_json: JSON.stringify(factory),
+                        inputs: inputs
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    status.textContent = 'Completed';
+                    status.className = 'status-badge status-idle';
+                    logEvent('tool-result', 'Factory completed: ' + JSON.stringify(result.results));
+                } else {
+                    status.textContent = 'Error';
+                    status.className = 'status-badge status-error';
+                    logEvent('error', 'Factory error: ' + result.error);
+                }
+            } catch (e) {
+                status.textContent = 'Error';
+                status.className = 'status-badge status-error';
+                logEvent('error', 'Request failed: ' + e.message);
+            }
+            
+            stopConveyorAnimation();
+        }
+    </script>
+</body>
+</html>

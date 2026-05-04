@@ -1,0 +1,61 @@
+{
+  "id": "research_workflow",
+  "name": "Research Workflow",
+  "description": "Search the web using Gemini and summarize findings",
+  "blocks": [
+    {
+      "id": "input_query",
+      "name": "Search Query",
+      "type": "input",
+      "inputs": [],
+      "outputs": [
+        {"id": "input_query_out_0", "name": "value", "data_type": "string"}
+      ],
+      "params": {},
+      "config": {"x": 50, "y": 120, "color": "#3498DB"}
+    },
+    {
+      "id": "web_search",
+      "name": "Gemini Search",
+      "type": "tool",
+      "inputs": [
+        {"id": "web_search_in_0", "name": "query", "data_type": "string", "required": true}
+      ],
+      "outputs": [
+        {"id": "web_search_out_0", "name": "result", "data_type": "string"}
+      ],
+      "params": {
+        "tool_name": "gemini_search",
+        "tool_params": {}
+      },
+      "config": {"x": 230, "y": 120, "color": "#4A90D9"}
+    },
+    {
+      "id": "output_result",
+      "name": "Result",
+      "type": "output",
+      "inputs": [
+        {"id": "output_result_in_0", "name": "result", "data_type": "string", "required": true}
+      ],
+      "outputs": [],
+      "params": {},
+      "config": {"x": 430, "y": 120, "color": "#27AE60"}
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_1",
+      "source": {"block": "input_query", "port": "value"},
+      "target": {"block": "web_search", "port": "query"}
+    },
+    {
+      "id": "conn_2",
+      "source": {"block": "web_search", "port": "result"},
+      "target": {"block": "output_result", "port": "result"}
+    }
+  ],
+  "config": {
+    "max_iterations": 20,
+    "timeout_seconds": 120
+  }
+}
