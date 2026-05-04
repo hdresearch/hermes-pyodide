@@ -17,8 +17,6 @@
         .msg.assistant { color: #c9d1d9; }
         .msg.assistant::before { content: "⚕ "; color: #f0883e; }
         .msg.system { color: #8b949e; font-style: italic; font-size: 0.85em; }
-        .msg.tool { color: #7ee787; font-size: 0.85em; }
-        .msg.tool::before { content: "┊ "; }
         .msg.error { color: #f85149; font-size: 0.85em; }
         #input-row { display: flex; }
         #input { flex: 1; padding: 10px 14px; font-family: inherit; font-size: 0.95em; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-top: none; border-radius: 0 0 0 6px; outline: none; }
@@ -26,16 +24,16 @@
         #send { padding: 10px 20px; font-family: inherit; font-size: 0.95em; background: #238636; color: #fff; border: 1px solid #238636; border-top: none; border-radius: 0 0 6px 0; cursor: pointer; }
         #send:hover { background: #2ea043; }
         #send:disabled { background: #30363d; border-color: #30363d; cursor: not-allowed; }
-        #api-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+        #api-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
         #api-row label { color: #8b949e; font-size: 0.85em; white-space: nowrap; }
         #api-row input, #api-row select { padding: 6px 10px; font-family: inherit; font-size: 0.85em; background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; outline: none; }
         #api-row input:focus, #api-row select:focus { border-color: #58a6ff; }
-        #api-key { flex: 1; }
+        #api-key { flex: 1; min-width: 200px; }
     </style>
 </head>
 <body>
     <h1>⚕ Hermes Agent</h1>
-    <p class="subtitle">Running in-browser via Pyodide • single-threaded WebAssembly</p>
+    <p class="subtitle">Running in-browser via Pyodide • API calls proxied through VM</p>
 
     <div id="api-row">
         <label for="api-key">API Key:</label>
@@ -82,16 +80,24 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    // Server-side proxy for API calls (avoids CORS issues)
+    async function callLLM(apiKey, baseUrl, payload) {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_key: apiKey, base_url: baseUrl, payload }),
+        });
+        return await resp.json();
+    }
+
     async function init() {
         try {
-            // 1. Load Pyodide
             log('Loading Pyodide runtime...');
             pyodide = await loadPyodide({
                 stdout: (text) => { if (text.trim()) log('[py] ' + text); },
                 stderr: (text) => { if (text.trim()) log('[py:err] ' + text); },
             });
 
-            // 2. Install pip packages
             log('Installing packages...');
             await pyodide.loadPackage(['micropip', 'sqlite3', 'pyyaml']);
             await pyodide.runPythonAsync(`
@@ -104,27 +110,20 @@ await micropip.install([
 `);
             log('Packages installed.');
 
-            // 3. Fetch and unpack the hermes-agent bundle
             log('Downloading hermes-agent bundle...');
             const resp = await fetch('/hermes-agent-bundle.tar.gz');
             const buf = await resp.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-
-            // Write tarball to Pyodide FS
-            pyodide.FS.writeFile('/tmp/bundle.tar.gz', bytes);
+            pyodide.FS.writeFile('/tmp/bundle.tar.gz', new Uint8Array(buf));
 
             log('Unpacking agent code...');
             await pyodide.runPythonAsync(`
-import tarfile, os
+import tarfile, os, sys
 
 os.makedirs('/home/pyodide/hermes-agent', exist_ok=True)
 with tarfile.open('/tmp/bundle.tar.gz', 'r:gz') as tar:
     tar.extractall('/home/pyodide/hermes-agent')
-
-import sys
 sys.path.insert(0, '/home/pyodide/hermes-agent')
 
-# Set environment
 os.environ['PYODIDE'] = '1'
 os.environ['HERMES_HOME'] = '/home/pyodide/.hermes'
 os.makedirs('/home/pyodide/.hermes/logs', exist_ok=True)
@@ -133,18 +132,67 @@ os.makedirs('/home/pyodide/.hermes/sessions', exist_ok=True)
 print(f'Agent code unpacked. Files: {len(os.listdir("/home/pyodide/hermes-agent"))}')
 `);
 
-            // 4. Import the agent
             log('Loading hermes-agent...');
             await pyodide.runPythonAsync(`
-# Import shims first (patches threading, httpx, etc.)
 import pyodide_shims
-
-# Now import the agent
 from run_agent import AIAgent
 print('AIAgent imported successfully')
 `);
 
-            log('\n✅ Agent ready!');
+            log('Setting up API proxy...');
+            await pyodide.runPythonAsync(`
+import json
+from pyodide.ffi import run_sync as _pyodide_run_sync
+from pyodide.http import pyfetch
+
+# Patch: override OpenAI client to call our server-side proxy
+import httpx
+
+class _ProxyTransport(httpx.BaseTransport):
+    """Routes all OpenAI SDK HTTP calls through /api/chat on the host."""
+
+    def __init__(self, api_key, base_url):
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def handle_request(self, request):
+        # Only intercept chat completions
+        url_str = str(request.url)
+        if '/chat/completions' not in url_str:
+            # For non-chat requests (models list, etc), return a stub
+            return httpx.Response(200, json={"data": []})
+
+        body = json.loads(request.content) if request.content else {}
+        proxy_payload = json.dumps({
+            "api_key": self._api_key,
+            "base_url": self._base_url,
+            "payload": body,
+        }).encode()
+
+        resp = _pyodide_run_sync(pyfetch(
+            "/api/chat",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+            body=proxy_payload,
+        ))
+        resp_bytes = _pyodide_run_sync(resp.bytes())
+
+        # Build response headers
+        resp_headers = {"content-type": "application/json"}
+
+        return httpx.Response(
+            status_code=resp.status,
+            headers=resp_headers,
+            content=resp_bytes,
+        )
+
+# Store the transport class for use in sendMessage
+_ProxyTransportClass = _ProxyTransport
+
+print('API proxy transport ready')
+`);
+
+            log('\\n✅ Agent ready! Enter your API key and send a message.');
             inputEl.disabled = false;
             sendBtn.disabled = false;
             inputEl.placeholder = 'Type a message...';
@@ -175,26 +223,39 @@ print('AIAgent imported successfully')
         inputEl.disabled = true;
 
         try {
-            // Escape the user text for Python
             const escaped = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
             const escapedKey = apiKey.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
             const result = await pyodide.runPythonAsync(`
-import os
+import os, httpx
+from openai import OpenAI
+
 os.environ['OPENROUTER_API_KEY'] = '${escapedKey}'
+
+_base_url = 'https://openrouter.ai/api/v1'
+_transport = _ProxyTransportClass('${escapedKey}', _base_url)
+_http_client = httpx.Client(transport=_transport)
 
 try:
     agent = AIAgent(
-        base_url='https://openrouter.ai/api/v1',
+        base_url=_base_url,
         model='${model}',
         api_key='${escapedKey}',
         quiet_mode=True,
         enabled_toolsets=['memory', 'planning'],
     )
+    # Replace the client with our proxied version
+    agent.client = OpenAI(
+        api_key='${escapedKey}',
+        base_url=_base_url,
+        http_client=_http_client,
+    )
     result = agent.run_conversation('${escaped}')
     _response = result.get('final_response', str(result)) if isinstance(result, dict) else str(result)
 except Exception as e:
+    import traceback
     _response = f'Error: {type(e).__name__}: {e}'
+    traceback.print_exc()
 
 _response
 `);
