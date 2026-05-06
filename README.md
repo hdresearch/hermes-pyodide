@@ -1,3 +1,5 @@
+![Bringing Hermes to WebAssembly](hermes-wasm-cover.png)
+
 # hermes-pyodide
 
 Run [hermes-agent](../hermes-agent) in the browser via [Pyodide](https://pyodide.org) — CPython compiled to WebAssembly.
